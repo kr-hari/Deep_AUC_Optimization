@@ -1,45 +1,42 @@
 # Import all required modules
+from libauc.losses import AUCMLoss, CrossEntropyLoss, pAUCLoss
+import time
+import warnings
+from medmnist import dataset as MedmnistDataset
+from medmnist import INFO, Evaluator
+import medmnist
+from sklearn.metrics import accuracy_score as acc_score
+from torch.utils.tensorboard import SummaryWriter
+from torchsampler import ImbalancedDatasetSampler
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
+import torch.utils.data as data
+import torch.optim as optim
+import torch.nn as nn
+import torch
+from sklearn.metrics import roc_auc_score
+from libauc.metrics import auc_roc_score, pauc_roc_score
+from libauc.sampler import DualSampler
+from libauc.utils import ImbalancedDataGenerator
+from libauc.optimizers import PESG, Adam, SOPA
+from libauc.models import resnet18
+import copy
+import random
+import json
+from collections import OrderedDict
+from PIL import Image
+import pdb
+import numpy as np
+from tqdm import tqdm, trange
+import argparse
 import os
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-import argparse
-from tqdm import tqdm, trange
-import numpy as np
-import pdb
-from PIL import Image
-import time 
-from collections import OrderedDict
-import json
-import random
-import copy
-
-from libauc.models import resnet18
-from libauc.losses import AUCMLoss, CrossEntropyLoss, pAUCLoss  
-from libauc.optimizers import PESG, Adam, SOPA
-from libauc.utils import ImbalancedDataGenerator
-from libauc.sampler import DualSampler
-from libauc.metrics import auc_roc_score, pauc_roc_score
 
 
-from sklearn.metrics import roc_auc_score
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.utils.data as data
-import torchvision.transforms as transforms
-from torch.utils.data import Dataset
-from torchsampler import ImbalancedDatasetSampler
-from torch.utils.tensorboard import SummaryWriter
-
-from sklearn.metrics import accuracy_score as acc_score
-
-import medmnist
-from medmnist import INFO, Evaluator
-from medmnist import dataset as MedmnistDataset
-
-import warnings
-warnings.filterwarnings("ignore") 
+warnings.filterwarnings("ignore")
 
 print("INFO: IMPORTED LIBRARIES")
+
 
 def set_all_seeds(SEED):
     # REPRODUCIBILITY
@@ -51,19 +48,25 @@ def set_all_seeds(SEED):
 
 
 def halve_val_dset(train_dataset, val_dataset):
-    val_pos_indices = np.where(val_dataset.labels==1)[0]
-    val_neg_indices = np.where(val_dataset.labels==0)[0]
-    val_pos_indices_to_transfer = np.random.choice(val_pos_indices, size = len(val_pos_indices)//2)
-    val_neg_indices_to_transfer = np.random.choice(val_neg_indices, size = len(val_neg_indices)//2)
-    val_indices_to_transfer = np.concatenate((val_pos_indices_to_transfer, val_neg_indices_to_transfer))
-    val_indices_not_transfer = [i for i in range(val_dataset.imgs.shape[0]) if i not in val_indices_to_transfer]
+    val_pos_indices = np.where(val_dataset.labels == 1)[0]
+    val_neg_indices = np.where(val_dataset.labels == 0)[0]
+    val_pos_indices_to_transfer = np.random.choice(
+        val_pos_indices, size=len(val_pos_indices) // 2)
+    val_neg_indices_to_transfer = np.random.choice(
+        val_neg_indices, size=len(val_neg_indices) // 2)
+    val_indices_to_transfer = np.concatenate(
+        (val_pos_indices_to_transfer, val_neg_indices_to_transfer))
+    val_indices_not_transfer = [i for i in range(
+        val_dataset.imgs.shape[0]) if i not in val_indices_to_transfer]
 
     train_dataset_v1 = copy.deepcopy(train_dataset)
-    train_dataset_v1.imgs = np.concatenate((train_dataset_v1.imgs, val_dataset.imgs[val_indices_to_transfer,:,:]), axis=0)
-    train_dataset_v1.labels = np.concatenate((train_dataset.labels, val_dataset.labels[val_indices_to_transfer]), axis=0)
+    train_dataset_v1.imgs = np.concatenate(
+        (train_dataset_v1.imgs, val_dataset.imgs[val_indices_to_transfer, :, :]), axis=0)
+    train_dataset_v1.labels = np.concatenate(
+        (train_dataset.labels, val_dataset.labels[val_indices_to_transfer]), axis=0)
 
     val_dataset_v1 = copy.deepcopy(val_dataset)
-    val_dataset_v1.imgs = val_dataset.imgs[val_indices_not_transfer,:,:]
+    val_dataset_v1.imgs = val_dataset.imgs[val_indices_not_transfer, :, :]
     val_dataset_v1.labels = val_dataset.labels[val_indices_not_transfer]
 
     return train_dataset_v1, val_dataset_v1
@@ -73,27 +76,32 @@ def double_val_dset(train_dataset, val_dataset):
     """
     Makes Validation set 1.5 times
     """
-    train_pos_indices = np.where(train_dataset.labels==1)[0]
-    train_neg_indices = np.where(train_dataset.labels==0)[0]
+    train_pos_indices = np.where(train_dataset.labels == 1)[0]
+    train_neg_indices = np.where(train_dataset.labels == 0)[0]
 
-    val_pos_indices = np.where(val_dataset.labels==1)[0]
-    val_neg_indices = np.where(val_dataset.labels==0)[0]
+    val_pos_indices = np.where(val_dataset.labels == 1)[0]
+    val_neg_indices = np.where(val_dataset.labels == 0)[0]
 
-    train_pos_indices_to_transfer = np.random.choice(train_pos_indices, size = len(val_pos_indices)//2)
-    train_neg_indices_to_transfer = np.random.choice(train_neg_indices, size = len(val_neg_indices)//2)
-    train_indices_to_transfer = np.concatenate((train_pos_indices_to_transfer, train_neg_indices_to_transfer))
-    train_indices_not_transfer = [i for i in range(train_dataset.imgs.shape[0]) if i not in train_indices_to_transfer]
+    train_pos_indices_to_transfer = np.random.choice(
+        train_pos_indices, size=len(val_pos_indices) // 2)
+    train_neg_indices_to_transfer = np.random.choice(
+        train_neg_indices, size=len(val_neg_indices) // 2)
+    train_indices_to_transfer = np.concatenate(
+        (train_pos_indices_to_transfer, train_neg_indices_to_transfer))
+    train_indices_not_transfer = [i for i in range(
+        train_dataset.imgs.shape[0]) if i not in train_indices_to_transfer]
 
     train_dataset_v1 = copy.deepcopy(train_dataset)
-    train_dataset_v1.imgs = train_dataset.imgs[train_indices_not_transfer,:,:]
+    train_dataset_v1.imgs = train_dataset.imgs[train_indices_not_transfer, :, :]
     train_dataset_v1.labels = train_dataset.labels[train_indices_not_transfer]
     # train_dataset_v1.imgs = np.concatenate((train_dataset_v1.imgs, val_dataset.imgs[val_indices_to_transfer,:,:]), axis=0)
     val_dataset_v1 = copy.deepcopy(val_dataset)
-    val_dataset_v1.imgs = np.concatenate((val_dataset_v1.imgs, train_dataset.imgs[train_indices_to_transfer,:,:]), axis=0)
-    val_dataset_v1.labels = np.concatenate((val_dataset_v1.labels, train_dataset.labels[train_indices_to_transfer]), axis=0)
+    val_dataset_v1.imgs = np.concatenate(
+        (val_dataset_v1.imgs, train_dataset.imgs[train_indices_to_transfer, :, :]), axis=0)
+    val_dataset_v1.labels = np.concatenate(
+        (val_dataset_v1.labels, train_dataset.labels[train_indices_to_transfer]), axis=0)
 
     return train_dataset_v1, val_dataset_v1
-
 
 
 class MNIST_3D_Datasets(MedmnistDataset.MedMNIST3D):
@@ -114,7 +122,7 @@ class MNIST_3D_Datasets(MedmnistDataset.MedMNIST3D):
         '''
         img, target = self.imgs[index], self.labels[index].astype(int)
 
-        img = np.stack([img/255.]*(3 if self.as_rgb else 1), axis=0)
+        img = np.stack([img / 255.] * (3 if self.as_rgb else 1), axis=0)
 
         img = torch.tensor(img)
 
@@ -128,10 +136,16 @@ class MNIST_3D_Datasets(MedmnistDataset.MedMNIST3D):
         return img, target
 
 
-
 class MNIST_pAUC_Dataset(MedmnistDataset.MedMNIST3D):
 
-    def __init__(self, dataset, transformation_list, as_rgb, target_transform, mode='train', ndim=3):
+    def __init__(
+            self,
+            dataset,
+            transformation_list,
+            as_rgb,
+            target_transform,
+            mode='train',
+            ndim=3):
 
         self.imgs = dataset.imgs
         self.labels = dataset.labels
@@ -140,10 +154,10 @@ class MNIST_pAUC_Dataset(MedmnistDataset.MedMNIST3D):
         self.target_transform = target_transform
         self.mode = mode
         self.ndim = ndim
-        self.pos_indices = np.flatnonzero(self.labels==1)
+        self.pos_indices = np.flatnonzero(self.labels == 1)
         self.pos_index_map = {}
         for i, idx in enumerate(self.pos_indices):
-           self.pos_index_map[idx] = i
+            self.pos_index_map[idx] = i
 
     def __getitem__(self, index):
         '''
@@ -153,8 +167,8 @@ class MNIST_pAUC_Dataset(MedmnistDataset.MedMNIST3D):
         '''
         img, target = self.imgs[index], self.labels[index].astype(int)
 
-        if self.ndim==4:
-            img = np.stack([img/255.]*(3 if self.as_rgb else 1), axis=0)
+        if self.ndim == 4:
+            img = np.stack([img / 255.] * (3 if self.as_rgb else 1), axis=0)
             img = torch.tensor(img)
 
         if self.mode == 'train':
@@ -173,26 +187,32 @@ class MNIST_pAUC_Dataset(MedmnistDataset.MedMNIST3D):
 
 
 class ImageDataset(Dataset):
-    def __init__(self, images, targets, image_size=32, crop_size=30, mode='train'):
-       self.images = images.astype(np.uint8)
-       self.targets = targets
-       self.mode = mode
-       self.transform_train = transforms.Compose([                                                
-                              transforms.ToTensor(),
-                              transforms.RandomCrop((crop_size, crop_size), padding=None),
-                              transforms.RandomHorizontalFlip(),
-                              transforms.Resize((image_size, image_size)),
-                              ])
-       self.transform_test = transforms.Compose([
-                             transforms.ToTensor(),
-                             transforms.Resize((image_size, image_size)),
-                              ])
-       
-       # for loss function
-       self.pos_indices = np.flatnonzero(targets==1)
-       self.pos_index_map = {}
-       for i, idx in enumerate(self.pos_indices):
-           self.pos_index_map[idx] = i
+    def __init__(
+            self,
+            images,
+            targets,
+            image_size=32,
+            crop_size=30,
+            mode='train'):
+        self.images = images.astype(np.uint8)
+        self.targets = targets
+        self.mode = mode
+        self.transform_train = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomCrop((crop_size, crop_size), padding=None),
+            transforms.RandomHorizontalFlip(),
+            transforms.Resize((image_size, image_size)),
+        ])
+        self.transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Resize((image_size, image_size)),
+        ])
+
+        # for loss function
+        self.pos_indices = np.flatnonzero(targets == 1)
+        self.pos_index_map = {}
+        for i, idx in enumerate(self.pos_indices):
+            self.pos_index_map[idx] = i
 
     def __len__(self):
         return len(self.images)
@@ -218,8 +238,28 @@ np.random.seed(SEED)
 set_all_seeds(SEED)
 
 
-def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, model_flag, resize, as_rgb, model_path, run,  lr, margin, 
-         optimizer_fn, epoch_decay, weight_decay, loss_fn, gamma, args, sampling_rate, momentum):
+def main(
+        data_flag,
+        output_root,
+        num_epochs,
+        gpu_ids,
+        batch_size,
+        download,
+        model_flag,
+        resize,
+        as_rgb,
+        model_path,
+        run,
+        lr,
+        margin,
+        optimizer_fn,
+        epoch_decay,
+        weight_decay,
+        loss_fn,
+        gamma,
+        args,
+        sampling_rate,
+        momentum):
 
     global max_fpr
 
@@ -230,16 +270,20 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     n_channels = 3 if as_rgb else info['n_channels']
     n_classes = len(info['label'])
     DataClass = getattr(medmnist, info['python_class'])
-    n_dim = DataClass(split='train', download=download, as_rgb=as_rgb).imgs.ndim
+    n_dim = DataClass(
+        split='train',
+        download=download,
+        as_rgb=as_rgb).imgs.ndim
     max_fpr = 0.7
 
     if torch.cuda.is_available():
-        device =  torch.device('cuda:0')
+        device = torch.device('cuda:0')
     else:
         device = torch.device('cpu')
-    
+
     output_root = os.path.join(output_root, data_flag)
-    tensorboard_output_root = os.path.join(output_root, time.strftime("%y%m%d"))
+    tensorboard_output_root = os.path.join(
+        output_root, time.strftime("%y%m%d"))
     if not os.path.exists(output_root):
         os.makedirs(output_root)
     if not os.path.exists(tensorboard_output_root):
@@ -255,115 +299,176 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
         print("INFO: NOT Using Data Augmentation")
         if n_dim <= 3:
             train_transformation_list.extend([transforms.ToTensor(),
-                transforms.ToPILImage(),
-                transforms.Grayscale(3),
-                transforms.ToTensor()])
+                                              transforms.ToPILImage(),
+                                              transforms.Grayscale(3),
+                                              transforms.ToTensor()])
             eval_transformation_list.extend([transforms.ToTensor(),
-                transforms.ToPILImage(),
-                transforms.Grayscale(3),
-                transforms.ToTensor()])
-            
-            if resize:
-                train_transformation_list.append(transforms.Resize((32, 32), interpolation=Image.NEAREST))
-                eval_transformation_list.append(transforms.Resize((32, 32), interpolation=Image.NEAREST))
+                                             transforms.ToPILImage(),
+                                             transforms.Grayscale(3),
+                                             transforms.ToTensor()])
 
-        train_transformation_list.append(transforms.Normalize(mean=[.5], std=[.5]))
-        train_transformation_list.append(transforms.Normalize(mean=[.5], std=[.5]))
+            if resize:
+                train_transformation_list.append(
+                    transforms.Resize(
+                        (32, 32), interpolation=Image.NEAREST))
+                eval_transformation_list.append(
+                    transforms.Resize(
+                        (32, 32), interpolation=Image.NEAREST))
+
+        train_transformation_list.append(
+            transforms.Normalize(mean=[.5], std=[.5]))
+        train_transformation_list.append(
+            transforms.Normalize(mean=[.5], std=[.5]))
 
     else:
         print("INFO : Using Data Augmentation")
         if n_dim <= 3:
-            train_transformation_list.extend([transforms.ToTensor(),
-                transforms.ToPILImage(),
-                transforms.Grayscale(3),
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomRotation(degrees=30),
-                transforms.ColorJitter(brightness=0.1, contrast=0.1),
-                transforms.ToTensor()
-            ])
+            train_transformation_list.extend(
+                [
+                    transforms.ToTensor(),
+                    transforms.ToPILImage(),
+                    transforms.Grayscale(3),
+                    transforms.RandomHorizontalFlip(
+                        p=0.5),
+                    transforms.RandomRotation(
+                        degrees=30),
+                    transforms.ColorJitter(
+                        brightness=0.1,
+                        contrast=0.1),
+                    transforms.ToTensor()])
 
             eval_transformation_list.extend([transforms.ToTensor(),
-                transforms.ToPILImage(),
-                transforms.Grayscale(3),
-                transforms.ToTensor()
-            ])
-        
+                                             transforms.ToPILImage(),
+                                             transforms.Grayscale(3),
+                                             transforms.ToTensor()
+                                             ])
+
         if resize:
-            train_transformation_list.append(transforms.Resize((32, 32))) 
+            train_transformation_list.append(transforms.Resize((32, 32)))
             eval_transformation_list.append(transforms.Resize((32, 32)))
 
-        train_transformation_list.append(transforms.Normalize(mean=[.5], std=[.5]))
-        train_transformation_list.append(transforms.Normalize(mean=[.5], std=[.5]))
-
+        train_transformation_list.append(
+            transforms.Normalize(mean=[.5], std=[.5]))
+        train_transformation_list.append(
+            transforms.Normalize(mean=[.5], std=[.5]))
 
     data_train_transform = transforms.Compose(train_transformation_list)
     data_eval_transform = transforms.Compose(eval_transformation_list)
 
-    train_dataset = DataClass(split='train', transform=data_train_transform, download=download, as_rgb=as_rgb)
-    val_dataset = DataClass(split='val', transform=data_eval_transform, download=download, as_rgb=as_rgb)
-    test_dataset = DataClass(split='test', transform=data_eval_transform, download=download, as_rgb=as_rgb)
+    train_dataset = DataClass(
+        split='train',
+        transform=data_train_transform,
+        download=download,
+        as_rgb=as_rgb)
+    val_dataset = DataClass(
+        split='val',
+        transform=data_eval_transform,
+        download=download,
+        as_rgb=as_rgb)
+    test_dataset = DataClass(
+        split='test',
+        transform=data_eval_transform,
+        download=download,
+        as_rgb=as_rgb)
 
-    if args.modify_datasets=='halve_val':
+    if args.modify_datasets == 'halve_val':
         print("INFO : Halving the validation dataset")
-        train_dataset, val_dataset  = halve_val_dset(train_dataset, val_dataset)
-    elif args.modify_datasets=='double_val':
+        train_dataset, val_dataset = halve_val_dset(train_dataset, val_dataset)
+    elif args.modify_datasets == 'double_val':
         print("INFO : Doubling the validation dataset")
-        train_dataset, val_dataset  = double_val_dset(train_dataset, val_dataset)
-    
-
+        train_dataset, val_dataset = double_val_dset(
+            train_dataset, val_dataset)
 
     if n_dim == 4:
-        train_dataset.imgs = np.swapaxes(train_dataset.imgs, 1, 3) 
-        val_dataset.imgs = np.swapaxes(val_dataset.imgs, 1, 3) 
-        test_dataset.imgs = np.swapaxes(test_dataset.imgs, 1, 3) 
+        train_dataset.imgs = np.swapaxes(train_dataset.imgs, 1, 3)
+        val_dataset.imgs = np.swapaxes(val_dataset.imgs, 1, 3)
+        test_dataset.imgs = np.swapaxes(test_dataset.imgs, 1, 3)
         train_dataset.imgs = torch.tensor(torch.from_numpy(train_dataset.imgs))
-        train_dataset = MNIST_3D_Datasets(train_dataset, transformation_list=train_transformation_list, 
-                                        as_rgb=train_dataset.as_rgb, target_transform=train_dataset.target_transform)
-        val_dataset = MNIST_3D_Datasets(val_dataset, transformation_list=eval_transformation_list, 
-                                        as_rgb=train_dataset.as_rgb, target_transform=train_dataset.target_transform)
-        test_dataset = MNIST_3D_Datasets(test_dataset, transformation_list=eval_transformation_list, 
-                                        as_rgb=train_dataset.as_rgb, target_transform=train_dataset.target_transform)
-    
+        train_dataset = MNIST_3D_Datasets(
+            train_dataset,
+            transformation_list=train_transformation_list,
+            as_rgb=train_dataset.as_rgb,
+            target_transform=train_dataset.target_transform)
+        val_dataset = MNIST_3D_Datasets(
+            val_dataset,
+            transformation_list=eval_transformation_list,
+            as_rgb=train_dataset.as_rgb,
+            target_transform=train_dataset.target_transform)
+        test_dataset = MNIST_3D_Datasets(
+            test_dataset,
+            transformation_list=eval_transformation_list,
+            as_rgb=train_dataset.as_rgb,
+            target_transform=train_dataset.target_transform)
+
     # sampler = DualSampler(train_dataset, batch_size, sampling_rate=sampling_rate)
     # sampler = ImbalancedDatasetSampler(train_dataset)
 
     # SPECIALLY FOR PAUC LOSS
-    train_dataset = MNIST_pAUC_Dataset(dataset=train_dataset, transformation_list=train_transformation_list, as_rgb=as_rgb, target_transform=None, mode='train', ndim=n_dim)
-    val_dataset = MNIST_pAUC_Dataset(dataset=val_dataset, transformation_list=eval_transformation_list, as_rgb=as_rgb, target_transform=None, mode='val', ndim=n_dim)
-    test_dataset = MNIST_pAUC_Dataset(dataset=test_dataset, transformation_list=eval_transformation_list, as_rgb=as_rgb, target_transform=None, mode='test', ndim=n_dim)
+    train_dataset = MNIST_pAUC_Dataset(
+        dataset=train_dataset,
+        transformation_list=train_transformation_list,
+        as_rgb=as_rgb,
+        target_transform=None,
+        mode='train',
+        ndim=n_dim)
+    val_dataset = MNIST_pAUC_Dataset(
+        dataset=val_dataset,
+        transformation_list=eval_transformation_list,
+        as_rgb=as_rgb,
+        target_transform=None,
+        mode='val',
+        ndim=n_dim)
+    test_dataset = MNIST_pAUC_Dataset(
+        dataset=test_dataset,
+        transformation_list=eval_transformation_list,
+        as_rgb=as_rgb,
+        target_transform=None,
+        mode='test',
+        ndim=n_dim)
 
     # pdb.set_trace()
-    
-    train_loader = data.DataLoader(dataset=train_dataset,
-                                batch_size=batch_size,
-                                # sampler=sampler,
-                                shuffle=True)
-    train_loader_at_eval = data.DataLoader(dataset=train_dataset,
-                                batch_size=batch_size,
-                                shuffle=False)
-    val_loader = data.DataLoader(dataset=val_dataset,
-                                batch_size=batch_size,
-                                shuffle=False)
-    test_loader = data.DataLoader(dataset=test_dataset,
-                                batch_size=batch_size,
-                                shuffle=False)
-    
 
+    train_loader = data.DataLoader(dataset=train_dataset,
+                                   batch_size=batch_size,
+                                   # sampler=sampler,
+                                   shuffle=True)
+    train_loader_at_eval = data.DataLoader(dataset=train_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=False)
+    val_loader = data.DataLoader(dataset=val_dataset,
+                                 batch_size=batch_size,
+                                 shuffle=False)
+    test_loader = data.DataLoader(dataset=test_dataset,
+                                  batch_size=batch_size,
+                                  shuffle=False)
 
     print('INFO: Building and training model...')
-    
-    
+
     if model_flag == 'resnet18':
-        model =  resnet18(pretrained=False, num_classes=1) if resize else ResNet18(in_channels=n_channels, num_classes=n_classes)
+        model = resnet18(
+            pretrained=False,
+            num_classes=1) if resize else ResNet18(
+            in_channels=n_channels,
+            num_classes=n_classes)
     elif model_flag == 'resnet50':
-        model =  resnet50(pretrained=False, num_classes=n_classes) if resize else ResNet50(in_channels=n_channels, num_classes=n_classes)
+        model = resnet50(
+            pretrained=False,
+            num_classes=n_classes) if resize else ResNet50(
+            in_channels=n_channels,
+            num_classes=n_classes)
     # else:
     #     raise NotImplementedError
-    
+
     # model = Resnet18(pretrained=False, num_classes=n_classes, in_channels=n_channels)
 
     if n_dim == 4:
-        model.conv1 = torch.nn.Conv2d(train_dataset.imgs.shape[1], 64, kernel_size=7, stride=2, padding=3, bias=False)
+        model.conv1 = torch.nn.Conv2d(
+            train_dataset.imgs.shape[1],
+            64,
+            kernel_size=7,
+            stride=2,
+            padding=3,
+            bias=False)
 
     model = model.to(device)
     # pdb.set_trace()
@@ -382,7 +487,13 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     elif loss_fn == 'pAUC':
         beta = 0.1
         eta = 1e1
-        criterion = pAUCLoss(pos_len=len(np.where(train_dataset.labels==1)[0]), backend='SOPA', beta=beta, margin=margin)
+        criterion = pAUCLoss(
+            pos_len=len(
+                np.where(
+                    train_dataset.labels == 1)[0]),
+            backend='SOPA',
+            beta=beta,
+            margin=margin)
     print("Loss Function Used : {}".format(criterion))
 
     # IN CASE OF PRETRAINED
@@ -400,29 +511,42 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
         return
 
     if optimizer_fn == 'Adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=weight_decay)
     elif optimizer_fn == 'PESG':
-        optimizer = PESG(model, 
-                 loss_fn=criterion, 
-                 lr=lr, 
-                 momentum=momentum, 
-                 margin=margin, 
-                 epoch_decay=epoch_decay, 
-                 weight_decay=weight_decay)
-    elif optimizer_fn=='SOPA':
-        optimizer = SOPA(model.parameters(), loss_fn=criterion.loss_fn, mode='adam', lr=lr, eta=eta, weight_decay=weight_decay)
+        optimizer = PESG(model,
+                         loss_fn=criterion,
+                         lr=lr,
+                         momentum=momentum,
+                         margin=margin,
+                         epoch_decay=epoch_decay,
+                         weight_decay=weight_decay)
+    elif optimizer_fn == 'SOPA':
+        optimizer = SOPA(
+            model.parameters(),
+            loss_fn=criterion.loss_fn,
+            mode='adam',
+            lr=lr,
+            eta=eta,
+            weight_decay=weight_decay)
     print("Optimizer Used : {}".format(optimizer.__str__()[:5]))
 
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, verbose=False)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones=milestones, gamma=gamma, verbose=False)
 
     logs = ['loss', 'auc', 'acc']
-    train_logs = ['train_'+log for log in logs]
-    val_logs = ['val_'+log for log in logs]
-    test_logs = ['test_'+log for log in logs]
-    log_dict = OrderedDict.fromkeys(train_logs+val_logs+test_logs, 0)
-    
-    out_filename = 'BatchSz_' + str(batch_size) +'_LR_' + str(lr) + '_Optimizer_'+str(optimizer_fn)+'_LossFn_'+str(loss_fn)+'_Margin_'+str(margin)+'_EpochDecay_'+str(epoch_decay)+'_WeightDecay_'+str(weight_decay)
-    writer = SummaryWriter(log_dir=os.path.join(tensorboard_output_root, 'Tensorboard_Results', out_filename))
+    train_logs = ['train_' + log for log in logs]
+    val_logs = ['val_' + log for log in logs]
+    test_logs = ['test_' + log for log in logs]
+    log_dict = OrderedDict.fromkeys(train_logs + val_logs + test_logs, 0)
+
+    out_filename = 'BatchSz_' + str(batch_size) + '_LR_' + str(lr) + '_Optimizer_' + str(optimizer_fn) + '_LossFn_' + str(
+        loss_fn) + '_Margin_' + str(margin) + '_EpochDecay_' + str(epoch_decay) + '_WeightDecay_' + str(weight_decay)
+    writer = SummaryWriter(
+        log_dir=os.path.join(
+            tensorboard_output_root,
+            'Tensorboard_Results',
+            out_filename))
 
     best_auc = 0
     best_epoch = 0
@@ -432,16 +556,51 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     iteration = 0
     epoch_log = {}
 
-    for epoch in trange(num_epochs):        
+    for epoch in trange(num_epochs):
 
-        train_loss = train(model, train_loader, task, criterion, optimizer, device, writer, loss_fn)
-        
-        train_metrics = test(model, train_evaluator, train_loader_at_eval, task, criterion, device, run, None, loss_fn)
-        val_metrics = test(model, val_evaluator, val_loader, task, criterion, device, run, None,  loss_fn)
-        test_metrics = test(model, test_evaluator, test_loader, task, criterion, device, run, None,  loss_fn)
-        
+        train_loss = train(
+            model,
+            train_loader,
+            task,
+            criterion,
+            optimizer,
+            device,
+            writer,
+            loss_fn)
+
+        train_metrics = test(
+            model,
+            train_evaluator,
+            train_loader_at_eval,
+            task,
+            criterion,
+            device,
+            run,
+            None,
+            loss_fn)
+        val_metrics = test(
+            model,
+            val_evaluator,
+            val_loader,
+            task,
+            criterion,
+            device,
+            run,
+            None,
+            loss_fn)
+        test_metrics = test(
+            model,
+            test_evaluator,
+            test_loader,
+            task,
+            criterion,
+            device,
+            run,
+            None,
+            loss_fn)
+
         scheduler.step()
-        
+
         for i, key in enumerate(train_logs):
             log_dict[key] = train_metrics[i]
         for i, key in enumerate(val_logs):
@@ -450,8 +609,13 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
             log_dict[key] = test_metrics[i]
 
         for key, value in log_dict.items():
-            writer.add_scalar(key.split('_')[0] + '/' + key.split('_')[1], value, epoch)
-            
+            writer.add_scalar(
+                key.split('_')[0] +
+                '/' +
+                key.split('_')[1],
+                value,
+                epoch)
+
         epoch_log[epoch] = dict(log_dict)
 
         # CHOOSE WHICH METRIC TO IDENTIFY BEST MODEL - ALWAYS GO WITH VAL
@@ -460,7 +624,7 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
             print("\nCurrent AUC : {}".format(cur_auc), end='')
         else:
             cur_auc = test_metrics[1]
-            
+
         if cur_auc > best_auc:
             best_epoch = epoch
             best_auc = cur_auc
@@ -478,9 +642,36 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
 
     # EVALUATE THE BEST MODEL
 
-    train_metrics = test(best_model, train_evaluator, train_loader_at_eval, task, criterion, device, run,  None, loss_fn)
-    val_metrics = test(best_model, val_evaluator, val_loader, task, criterion, device, run, None, loss_fn)
-    test_metrics = test(best_model, test_evaluator, test_loader, task, criterion, device, run,  None,loss_fn)
+    train_metrics = test(
+        best_model,
+        train_evaluator,
+        train_loader_at_eval,
+        task,
+        criterion,
+        device,
+        run,
+        None,
+        loss_fn)
+    val_metrics = test(
+        best_model,
+        val_evaluator,
+        val_loader,
+        task,
+        criterion,
+        device,
+        run,
+        None,
+        loss_fn)
+    test_metrics = test(
+        best_model,
+        test_evaluator,
+        test_loader,
+        task,
+        criterion,
+        device,
+        run,
+        None,
+        loss_fn)
 
     for i, key in enumerate(train_logs):
         log_dict[key] = train_metrics[i]
@@ -489,26 +680,45 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     for i, key in enumerate(test_logs):
         log_dict[key] = test_metrics[i]
 
-    train_log = 'train  auc: %.5f  acc: %.5f\n' % (train_metrics[1], train_metrics[2])
+    train_log = 'train  auc: %.5f  acc: %.5f\n' % (
+        train_metrics[1], train_metrics[2])
     val_log = 'val  auc: %.5f  acc: %.5f\n' % (val_metrics[1], val_metrics[2])
-    test_log = 'test  auc: %.5f  acc: %.5f\n' % (test_metrics[1], test_metrics[2])
+    test_log = 'test  auc: %.5f  acc: %.5f\n' % (
+        test_metrics[1], test_metrics[2])
 
     log = '%s\n' % (data_flag) + train_log + val_log + test_log
     print(log)
-    log_results(args, best_metrics=log_dict, best_metric_filename=os.path.join(output_root,'Best_metrics_of_each_run.txt'), 
-                epoch_log=epoch_log, epoch_log_fname=os.path.join(output_root, 'Epoch_Logs',out_filename))
-                
+    log_results(
+        args,
+        best_metrics=log_dict,
+        best_metric_filename=os.path.join(
+            output_root,
+            'Best_metrics_of_each_run.txt'),
+        epoch_log=epoch_log,
+        epoch_log_fname=os.path.join(
+            output_root,
+            'Epoch_Logs',
+            out_filename))
+
     writer.close()
 
 
-def train(model, train_loader, task, criterion, optimizer, device, writer, loss_fn):
+def train(
+        model,
+        train_loader,
+        task,
+        criterion,
+        optimizer,
+        device,
+        writer,
+        loss_fn):
     total_loss = []
     global iteration
 
     model.train()
     for batch_idx, (inputs, targets, index) in enumerate(train_loader):
 
-        if len(train_loader.dataset.imgs.shape)==4:
+        if len(train_loader.dataset.imgs.shape) == 4:
             inputs = inputs.squeeze()
 
         optimizer.zero_grad()
@@ -516,7 +726,7 @@ def train(model, train_loader, task, criterion, optimizer, device, writer, loss_
             outputs = model(inputs.to(device))
         elif loss_fn == 'AUCM':
             outputs = torch.sigmoid(model(inputs.to(device)))  # OG
-                
+
         elif loss_fn == 'pAUC':
             y_pred = torch.sigmoid(model(inputs.to(device)))
 
@@ -527,9 +737,7 @@ def train(model, train_loader, task, criterion, optimizer, device, writer, loss_
             targets = torch.squeeze(targets, 1).long().to(device)
             # loss = criterion(outputs, targets)
             # pdb.set_trace()
-            loss = criterion(y_pred, targets, index_p=index) 
-
-        
+            loss = criterion(y_pred, targets, index_p=index)
 
         total_loss.append(loss.item())
         writer.add_scalar('train_loss_logs', loss.item(), iteration)
@@ -539,11 +747,21 @@ def train(model, train_loader, task, criterion, optimizer, device, writer, loss_
 
         # if batch_idx>=5:
         #     break
-    
-    epoch_loss = sum(total_loss)/len(total_loss)
+
+    epoch_loss = sum(total_loss) / len(total_loss)
     return epoch_loss
 
-def test(model, evaluator, data_loader, task, criterion, device, run, save_folder=None, loss_fn=None):
+
+def test(
+        model,
+        evaluator,
+        data_loader,
+        task,
+        criterion,
+        device,
+        run,
+        save_folder=None,
+        loss_fn=None):
 
     model.eval()
     global max_fpr
@@ -556,7 +774,7 @@ def test(model, evaluator, data_loader, task, criterion, device, run, save_folde
     with torch.no_grad():
         for batch_idx, (inputs, targets, index) in enumerate(data_loader):
 
-            if len(data_loader.dataset.imgs.shape)==4:
+            if len(data_loader.dataset.imgs.shape) == 4:
                 inputs = inputs.squeeze()
             # try:
             #     outputs = model(inputs.to(device))
@@ -565,10 +783,10 @@ def test(model, evaluator, data_loader, task, criterion, device, run, save_folde
             try:
                 # pdb.set_trace()
                 outputs = model(inputs.float().to(device))
-            except:
+            except BaseException:
                 # pdb.set_trace()
                 print("Error Encountered")
-            
+
             if loss_fn == 'CE':
                 if task == 'multi-label, binary-class':
                     targets = targets.to(torch.float32).to(device)
@@ -589,21 +807,22 @@ def test(model, evaluator, data_loader, task, criterion, device, run, save_folde
             elif loss_fn == 'pAUC':
                 try:
                     targets = torch.squeeze(targets, 1).long().to(device)
-                except:
+                except BaseException:
                     pdb.set_trace()
                 outputs = torch.sigmoid(outputs.to(device))
                 try:
                     loss = criterion(outputs, targets, index_p=index)
-                except:
+                except BaseException:
                     print('', end='')
-                
 
             # total_loss.append(loss.item())
             try:
                 # y_score = torch.cat((y_score, outputs), 0)
-                y_score = np.concatenate((y_score, outputs.squeeze().cpu().numpy()))
-                target_list = np.concatenate((target_list, targets.squeeze().cpu().numpy()))
-            except:
+                y_score = np.concatenate(
+                    (y_score, outputs.squeeze().cpu().numpy()))
+                target_list = np.concatenate(
+                    (target_list, targets.squeeze().cpu().numpy()))
+            except BaseException:
                 # pdb.set_trace()
                 print("Error Encountered")
             # target_list = torch.cat((target_list, targets))
@@ -615,7 +834,7 @@ def test(model, evaluator, data_loader, task, criterion, device, run, save_folde
         sklearn_acc = 0
         try:
             val_pauc = pauc_roc_score(target_list, y_score, max_fpr=max_fpr)
-        except:
+        except BaseException:
             # pdb.set_trace()
             print("Error Encountered")
         auc, acc = val_pauc, sklearn_acc
@@ -626,7 +845,12 @@ def test(model, evaluator, data_loader, task, criterion, device, run, save_folde
         return [test_loss, auc, acc]
 
 
-def log_results(args, best_metrics, best_metric_filename, epoch_log, epoch_log_fname:str):
+def log_results(
+        args,
+        best_metrics,
+        best_metric_filename,
+        epoch_log,
+        epoch_log_fname: str):
     # Write Best Metrics
     data = vars(args)
     data.update(best_metrics)
@@ -634,23 +858,23 @@ def log_results(args, best_metrics, best_metric_filename, epoch_log, epoch_log_f
         with open(best_metric_filename, 'r', encoding="utf8") as file:
             file_data = json.loads(file.read())
             file_data.append(data)
-    except:
+    except BaseException:
         file_data = [data]
 
-    with open(best_metric_filename,'w', encoding="utf8") as file:
+    with open(best_metric_filename, 'w', encoding="utf8") as file:
         json.dump(file_data, file)
 
     # Write Epoch Logs
     if not os.path.exists(os.path.dirname(epoch_log_fname)):
         os.makedirs(os.path.dirname(epoch_log_fname))
-    with open(epoch_log_fname,'w') as file:
+    with open(epoch_log_fname, 'w') as file:
         file.write(str(epoch_log))
 
 
-if __name__== '__main__':
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='RUN Baseline model of MedMNIST2D')
-    
+
     parser.add_argument('--data_flag',
                         default='breastmnist',
                         type=str)
@@ -658,10 +882,11 @@ if __name__== '__main__':
                         default='./output',
                         help='output root, where to save models and results',
                         type=str)
-    parser.add_argument('--num_epochs',
-                        default=100,
-                        help='num of epochs of training, the script would only test model if set num_epochs to 0',
-                        type=int)
+    parser.add_argument(
+        '--num_epochs',
+        default=100,
+        help='num of epochs of training, the script would only test model if set num_epochs to 0',
+        type=int)
     parser.add_argument('--gpu_ids',
                         default='0',
                         type=str)
@@ -702,7 +927,7 @@ if __name__== '__main__':
     parser.add_argument('--optimizer',
                         default='PESG',
                         help='Optimizer',
-                        choices=['Adam','PESG', 'SOPA'],
+                        choices=['Adam', 'PESG', 'SOPA'],
                         type=str)
     parser.add_argument('--epoch_decay',
                         default=2e-3,
@@ -720,27 +945,31 @@ if __name__== '__main__':
                         default=0.1,
                         help='Gamma parameter for Multistep LR Scheduler',
                         type=float)
-    parser.add_argument('--sampling_rate',
-                        default=0.0,
-                        help='The oversampling ratio for the positive minority class',
-                        type=float)
-    parser.add_argument('--run',
-                        default='model1',
-                        help='to name a standard evaluation csv file, named as {flag}_{split}_[AUC]{auc:.3f}_[ACC]{acc:.3f}@{run}.csv',
-                        type=str)
+    parser.add_argument(
+        '--sampling_rate',
+        default=0.0,
+        help='The oversampling ratio for the positive minority class',
+        type=float)
+    parser.add_argument(
+        '--run',
+        default='model1',
+        help='to name a standard evaluation csv file, named as {flag}_{split}_[AUC]{auc:.3f}_[ACC]{acc:.3f}@{run}.csv',
+        type=str)
     parser.add_argument('--based_on',
                         default='val',
                         help='How to select best models - Test or Val?',
                         type=str)
-    parser.add_argument('--modify_datasets',
-                        default='',
-                        choices=['halve_val', 'double_val'],
-                        help='To change the size of validation and training dataset',
-                        type=str)
+    parser.add_argument(
+        '--modify_datasets',
+        default='',
+        choices=[
+            'halve_val',
+            'double_val'],
+        help='To change the size of validation and training dataset',
+        type=str)
     parser.add_argument('--data_aug',
                         action="store_true",
                         help='To perform data augmentation')
-    
 
     args = parser.parse_args()
     data_flag = args.data_flag
@@ -763,6 +992,26 @@ if __name__== '__main__':
     gamma = args.gamma
 
     # pdb.set_trace()
-    
-    main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, model_flag, resize, as_rgb, model_path, 
-         run, lr, margin, optimizer, epoch_decay, weight_decay, loss, gamma, args, args.sampling_rate, args.momentum)
+
+    main(
+        data_flag,
+        output_root,
+        num_epochs,
+        gpu_ids,
+        batch_size,
+        download,
+        model_flag,
+        resize,
+        as_rgb,
+        model_path,
+        run,
+        lr,
+        margin,
+        optimizer,
+        epoch_decay,
+        weight_decay,
+        loss,
+        gamma,
+        args,
+        args.sampling_rate,
+        args.momentum)

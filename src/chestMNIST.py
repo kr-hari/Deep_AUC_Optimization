@@ -5,7 +5,7 @@ from tqdm import tqdm, trange
 import numpy as np
 import pdb
 from PIL import Image
-import time 
+import time
 from collections import OrderedDict
 import json
 import random
@@ -34,9 +34,10 @@ from medmnist import INFO, Evaluator
 from medmnist import dataset as MedmnistDataset
 
 import warnings
-warnings.filterwarnings("ignore") 
+warnings.filterwarnings("ignore")
 
 print("INFO: IMPORTED LIBRARIES")
+
 
 def set_all_seeds(SEED):
     # REPRODUCIBILITY
@@ -44,7 +45,6 @@ def set_all_seeds(SEED):
     np.random.seed(SEED)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
 
 
 class MNIST_3D_Datasets(MedmnistDataset.MedMNIST3D):
@@ -65,7 +65,7 @@ class MNIST_3D_Datasets(MedmnistDataset.MedMNIST3D):
         '''
         img, target = self.imgs[index], self.labels[index].astype(int)
 
-        img = np.stack([img/255.]*(3 if self.as_rgb else 1), axis=0)
+        img = np.stack([img / 255.] * (3 if self.as_rgb else 1), axis=0)
 
         img = torch.tensor(img)
 
@@ -79,7 +79,6 @@ class MNIST_3D_Datasets(MedmnistDataset.MedMNIST3D):
         return img, target
 
 
-
 # Set seed for reproducible results
 SEED = 0
 torch.manual_seed(SEED)
@@ -89,8 +88,28 @@ np.random.seed(SEED)
 set_all_seeds(SEED)
 
 
-def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, model_flag, resize, as_rgb, model_path, run,  lr, margin, 
-         optimizer_fn, epoch_decay, weight_decay, loss_fn, gamma, args, sampling_rate, momentum):
+def main(
+        data_flag,
+        output_root,
+        num_epochs,
+        gpu_ids,
+        batch_size,
+        download,
+        model_flag,
+        resize,
+        as_rgb,
+        model_path,
+        run,
+        lr,
+        margin,
+        optimizer_fn,
+        epoch_decay,
+        weight_decay,
+        loss_fn,
+        gamma,
+        args,
+        sampling_rate,
+        momentum):
 
     milestones = [0.5 * num_epochs, 0.75 * num_epochs]
 
@@ -99,7 +118,10 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     n_channels = 3 if as_rgb else info['n_channels']
     n_classes = len(info['label'])
     DataClass = getattr(medmnist, info['python_class'])
-    n_dim = DataClass(split='train', download=download, as_rgb=as_rgb).imgs.ndim
+    n_dim = DataClass(
+        split='train',
+        download=download,
+        as_rgb=as_rgb).imgs.ndim
 
     str_ids = gpu_ids.split(',')
     gpu_ids = []
@@ -108,11 +130,14 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
         if id >= 0:
             gpu_ids.append(id)
     if len(gpu_ids) > 0:
-        os.environ["CUDA_VISIBLE_DEVICES"]=str(gpu_ids[0])
-    device = torch.device('cuda:{}'.format(gpu_ids[0])) if gpu_ids else torch.device('cpu') 
-    
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_ids[0])
+    device = torch.device(
+        'cuda:{}'.format(
+            gpu_ids[0])) if gpu_ids else torch.device('cpu')
+
     output_root = os.path.join(output_root, data_flag)
-    tensorboard_output_root = os.path.join(output_root, time.strftime("%y%m%d"))
+    tensorboard_output_root = os.path.join(
+        output_root, time.strftime("%y%m%d"))
     if not os.path.exists(output_root):
         os.makedirs(output_root)
     if not os.path.exists(tensorboard_output_root):
@@ -124,67 +149,102 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     transformation_list = []
     if n_dim <= 3:
         transformation_list.extend([transforms.ToTensor(),
-            transforms.ToPILImage(),
-            transforms.Grayscale(3),
-            transforms.ToTensor()])
-        
-        if resize:
-            transformation_list.append(transforms.Resize((32, 32), interpolation=Image.NEAREST))
+                                    transforms.ToPILImage(),
+                                    transforms.Grayscale(3),
+                                    transforms.ToTensor()])
 
-    transformation_list.extend([transforms.Resize((32, 32)), transforms.Normalize(mean=[.5], std=[.5])])
+        if resize:
+            transformation_list.append(
+                transforms.Resize(
+                    (32, 32), interpolation=Image.NEAREST))
+
+    transformation_list.extend(
+        [transforms.Resize((32, 32)), transforms.Normalize(mean=[.5], std=[.5])])
     data_transform = transforms.Compose(transformation_list)
 
-    train_dataset = DataClass(split='train', transform=data_transform, download=download, as_rgb=as_rgb)
-    val_dataset = DataClass(split='val', transform=data_transform, download=download, as_rgb=as_rgb)
-    test_dataset = DataClass(split='test', transform=data_transform, download=download, as_rgb=as_rgb)
+    train_dataset = DataClass(
+        split='train',
+        transform=data_transform,
+        download=download,
+        as_rgb=as_rgb)
+    val_dataset = DataClass(
+        split='val',
+        transform=data_transform,
+        download=download,
+        as_rgb=as_rgb)
+    test_dataset = DataClass(
+        split='test',
+        transform=data_transform,
+        download=download,
+        as_rgb=as_rgb)
 
     if n_dim == 4:
-        train_dataset.imgs = np.swapaxes(train_dataset.imgs, 1, 3) 
-        val_dataset.imgs = np.swapaxes(val_dataset.imgs, 1, 3) 
-        test_dataset.imgs = np.swapaxes(test_dataset.imgs, 1, 3) 
+        train_dataset.imgs = np.swapaxes(train_dataset.imgs, 1, 3)
+        val_dataset.imgs = np.swapaxes(val_dataset.imgs, 1, 3)
+        test_dataset.imgs = np.swapaxes(test_dataset.imgs, 1, 3)
         train_dataset.imgs = torch.tensor(torch.from_numpy(train_dataset.imgs))
-        train_dataset = MNIST_3D_Datasets(train_dataset, transformation_list=transformation_list, 
-                                        as_rgb=train_dataset.as_rgb, target_transform=train_dataset.target_transform)
-        val_dataset = MNIST_3D_Datasets(val_dataset, transformation_list=transformation_list, 
-                                        as_rgb=train_dataset.as_rgb, target_transform=train_dataset.target_transform)
-        test_dataset = MNIST_3D_Datasets(test_dataset, transformation_list=transformation_list, 
-                                        as_rgb=train_dataset.as_rgb, target_transform=train_dataset.target_transform)
-    
+        train_dataset = MNIST_3D_Datasets(
+            train_dataset,
+            transformation_list=transformation_list,
+            as_rgb=train_dataset.as_rgb,
+            target_transform=train_dataset.target_transform)
+        val_dataset = MNIST_3D_Datasets(
+            val_dataset,
+            transformation_list=transformation_list,
+            as_rgb=train_dataset.as_rgb,
+            target_transform=train_dataset.target_transform)
+        test_dataset = MNIST_3D_Datasets(
+            test_dataset,
+            transformation_list=transformation_list,
+            as_rgb=train_dataset.as_rgb,
+            target_transform=train_dataset.target_transform)
+
     # sampler = DualSampler(train_dataset, batch_size, sampling_rate=sampling_rate)
     # sampler = ImbalancedDatasetSampler(train_dataset)
 
     # pdb.set_trace()
-    
+
     train_loader = data.DataLoader(dataset=train_dataset,
-                                batch_size=batch_size,
-                                # sampler=sampler,
-                                shuffle=True)
+                                   batch_size=batch_size,
+                                   # sampler=sampler,
+                                   shuffle=True)
     train_loader_at_eval = data.DataLoader(dataset=train_dataset,
-                                batch_size=batch_size,
-                                shuffle=False)
+                                           batch_size=batch_size,
+                                           shuffle=False)
     val_loader = data.DataLoader(dataset=val_dataset,
-                                batch_size=batch_size,
-                                shuffle=False)
+                                 batch_size=batch_size,
+                                 shuffle=False)
     test_loader = data.DataLoader(dataset=test_dataset,
-                                batch_size=batch_size,
-                                shuffle=False)
-    
-    
+                                  batch_size=batch_size,
+                                  shuffle=False)
 
     print('INFO: Building and training model...')
-    
-    
+
     if model_flag == 'resnet18':
-        model =  resnet18(pretrained=False, num_classes=n_classes) if resize else ResNet18(in_channels=n_channels, num_classes=n_classes)
+        model = resnet18(
+            pretrained=False,
+            num_classes=n_classes) if resize else ResNet18(
+            in_channels=n_channels,
+            num_classes=n_classes)
     elif model_flag == 'resnet50':
-        model =  resnet50(pretrained=False, num_classes=n_classes) if resize else ResNet50(in_channels=n_channels, num_classes=n_classes)
+        model = resnet50(
+            pretrained=False,
+            num_classes=n_classes) if resize else ResNet50(
+            in_channels=n_channels,
+            num_classes=n_classes)
     # else:
     #     raise NotImplementedError
-    
+
     # model = Resnet18(pretrained=False, num_classes=n_classes, in_channels=n_channels)
 
     if n_dim == 4:
-        model.conv1 = torch.nn.Conv2d(train_dataset.imgs.shape[1], 64, kernel_size=7, stride=2, padding=3, bias=False)
+        model.conv1 = torch.nn.Conv2d(
+            train_dataset.imgs.shape[1],
+            64,
+            kernel_size=7,
+            stride=2,
+            padding=3,
+            bias=False)
 
     model = model.to(device)
 
@@ -220,27 +280,34 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
         return
 
     if optimizer_fn == 'Adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=weight_decay)
     elif optimizer_fn == 'PESG':
-        optimizer = PESG(model, 
-                 loss_fn=criterion, 
-                 lr=lr, 
-                 momentum=momentum, 
-                 margin=margin, 
-                 epoch_decay=epoch_decay, 
-                 weight_decay=weight_decay)
+        optimizer = PESG(model,
+                         loss_fn=criterion,
+                         lr=lr,
+                         momentum=momentum,
+                         margin=margin,
+                         epoch_decay=epoch_decay,
+                         weight_decay=weight_decay)
     print("Optimizer Used : {}".format(optimizer.__str__()[:5]))
 
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, verbose=False)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones=milestones, gamma=gamma, verbose=False)
 
     logs = ['loss', 'auc', 'acc']
-    train_logs = ['train_'+log for log in logs]
-    val_logs = ['val_'+log for log in logs]
-    test_logs = ['test_'+log for log in logs]
-    log_dict = OrderedDict.fromkeys(train_logs+val_logs+test_logs, 0)
-    
-    out_filename = 'BatchSz_' + str(batch_size) +'_LR_' + str(lr) + '_Optimizer_'+str(optimizer_fn)+'_LossFn_'+str(loss_fn)+'_Margin_'+str(margin)+'_EpochDecay_'+str(epoch_decay)+'_WeightDecay_'+str(weight_decay)
-    writer = SummaryWriter(log_dir=os.path.join(tensorboard_output_root, 'Tensorboard_Results', out_filename))
+    train_logs = ['train_' + log for log in logs]
+    val_logs = ['val_' + log for log in logs]
+    test_logs = ['test_' + log for log in logs]
+    log_dict = OrderedDict.fromkeys(train_logs + val_logs + test_logs, 0)
+
+    out_filename = 'BatchSz_' + str(batch_size) + '_LR_' + str(lr) + '_Optimizer_' + str(optimizer_fn) + '_LossFn_' + str(
+        loss_fn) + '_Margin_' + str(margin) + '_EpochDecay_' + str(epoch_decay) + '_WeightDecay_' + str(weight_decay)
+    writer = SummaryWriter(
+        log_dir=os.path.join(
+            tensorboard_output_root,
+            'Tensorboard_Results',
+            out_filename))
 
     best_auc = 0
     best_epoch = 0
@@ -250,16 +317,52 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     iteration = 0
     epoch_log = {}
 
-    for epoch in trange(num_epochs):        
+    for epoch in trange(num_epochs):
 
-        train_loss = train(model, train_loader, test_loader, task, criterion, optimizer, device, writer, loss_fn)
-        
-        train_metrics = test(model, train_evaluator, train_loader_at_eval, task, criterion, device, run, None, loss_fn)
-        val_metrics = test(model, val_evaluator, val_loader, task, criterion, device, run, None,  loss_fn)
-        test_metrics = test(model, test_evaluator, test_loader, task, criterion, device, run, None,  loss_fn)
-        
+        train_loss = train(
+            model,
+            train_loader,
+            test_loader,
+            task,
+            criterion,
+            optimizer,
+            device,
+            writer,
+            loss_fn)
+
+        train_metrics = test(
+            model,
+            train_evaluator,
+            train_loader_at_eval,
+            task,
+            criterion,
+            device,
+            run,
+            None,
+            loss_fn)
+        val_metrics = test(
+            model,
+            val_evaluator,
+            val_loader,
+            task,
+            criterion,
+            device,
+            run,
+            None,
+            loss_fn)
+        test_metrics = test(
+            model,
+            test_evaluator,
+            test_loader,
+            task,
+            criterion,
+            device,
+            run,
+            None,
+            loss_fn)
+
         scheduler.step()
-        
+
         for i, key in enumerate(train_logs):
             log_dict[key] = train_metrics[i]
         for i, key in enumerate(val_logs):
@@ -268,8 +371,13 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
             log_dict[key] = test_metrics[i]
 
         for key, value in log_dict.items():
-            writer.add_scalar(key.split('_')[0] + '/' + key.split('_')[1], value, iteration)
-            
+            writer.add_scalar(
+                key.split('_')[0] +
+                '/' +
+                key.split('_')[1],
+                value,
+                iteration)
+
         epoch_log[epoch] = dict(log_dict)
 
         # CHOOSE WHICH METRIC TO IDENTIFY BEST MODEL - ALWAYS GO WITH VAL
@@ -287,9 +395,36 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
 
     # EVALUATE THE BEST MODEL
 
-    train_metrics = test(best_model, train_evaluator, train_loader_at_eval, task, criterion, device, run,  None, loss_fn)
-    val_metrics = test(best_model, val_evaluator, val_loader, task, criterion, device, run, None, loss_fn)
-    test_metrics = test(best_model, test_evaluator, test_loader, task, criterion, device, run,  None,loss_fn)
+    train_metrics = test(
+        best_model,
+        train_evaluator,
+        train_loader_at_eval,
+        task,
+        criterion,
+        device,
+        run,
+        None,
+        loss_fn)
+    val_metrics = test(
+        best_model,
+        val_evaluator,
+        val_loader,
+        task,
+        criterion,
+        device,
+        run,
+        None,
+        loss_fn)
+    test_metrics = test(
+        best_model,
+        test_evaluator,
+        test_loader,
+        task,
+        criterion,
+        device,
+        run,
+        None,
+        loss_fn)
 
     for i, key in enumerate(train_logs):
         log_dict[key] = train_metrics[i]
@@ -298,26 +433,46 @@ def main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, mode
     for i, key in enumerate(test_logs):
         log_dict[key] = test_metrics[i]
 
-    train_log = 'train  auc: %.5f  acc: %.5f\n' % (train_metrics[1], train_metrics[2])
+    train_log = 'train  auc: %.5f  acc: %.5f\n' % (
+        train_metrics[1], train_metrics[2])
     val_log = 'val  auc: %.5f  acc: %.5f\n' % (val_metrics[1], val_metrics[2])
-    test_log = 'test  auc: %.5f  acc: %.5f\n' % (test_metrics[1], test_metrics[2])
+    test_log = 'test  auc: %.5f  acc: %.5f\n' % (
+        test_metrics[1], test_metrics[2])
 
     log = '%s\n' % (data_flag) + train_log + val_log + test_log
     print(log)
-    log_results(args, best_metrics=log_dict, best_metric_filename=os.path.join(output_root,'Best_metrics_of_each_run.txt'), 
-                epoch_log=epoch_log, epoch_log_fname=os.path.join(output_root, 'Epoch_Logs',out_filename))
-                
+    log_results(
+        args,
+        best_metrics=log_dict,
+        best_metric_filename=os.path.join(
+            output_root,
+            'Best_metrics_of_each_run.txt'),
+        epoch_log=epoch_log,
+        epoch_log_fname=os.path.join(
+            output_root,
+            'Epoch_Logs',
+            out_filename))
+
     writer.close()
 
 
-def train(model, train_loader, test_loader, task, criterion, optimizer, device, writer, loss_fn):
+def train(
+        model,
+        train_loader,
+        test_loader,
+        task,
+        criterion,
+        optimizer,
+        device,
+        writer,
+        loss_fn):
     total_loss = []
     global iteration
 
     model.train()
     for batch_idx, (inputs, targets) in enumerate(train_loader):
 
-        if len(train_loader.dataset.imgs.shape)==4:
+        if len(train_loader.dataset.imgs.shape) == 4:
             inputs = inputs.squeeze()
 
         optimizer.zero_grad()
@@ -329,8 +484,7 @@ def train(model, train_loader, test_loader, task, criterion, optimizer, device, 
             # pdb.set_trace()
             softmax = torch.nn.Softmax()
             outputs = softmax(model(inputs.to(device)))
-            
-                
+
             # # outputs = nn.Softmax(model(inputs.to(device)))
             # m = nn.Softmax()
             # outputs = m(model(inputs.to(device)))
@@ -350,31 +504,51 @@ def train(model, train_loader, test_loader, task, criterion, optimizer, device, 
         loss.backward()
         optimizer.step()
 
-        if iteration%30 == 0 :
-            test_metrics = test(model, test_evaluator, test_loader, task, criterion, device, run,  None,loss_fn)
-            test_log = 'test  auc: %.5f  acc: %.5f\n' % (test_metrics[1], test_metrics[2])
+        if iteration % 30 == 0:
+            test_metrics = test(
+                model,
+                test_evaluator,
+                test_loader,
+                task,
+                criterion,
+                device,
+                run,
+                None,
+                loss_fn)
+            test_log = 'test  auc: %.5f  acc: %.5f\n' % (
+                test_metrics[1], test_metrics[2])
             print(test_log)
-    
-    epoch_loss = sum(total_loss)/len(total_loss)
+
+    epoch_loss = sum(total_loss) / len(total_loss)
     return epoch_loss
 
-def test(model, evaluator, data_loader, task, criterion, device, run, save_folder=None, loss_fn=None):
+
+def test(
+        model,
+        evaluator,
+        data_loader,
+        task,
+        criterion,
+        device,
+        run,
+        save_folder=None,
+        loss_fn=None):
 
     model.eval()
-    
+
     total_loss = []
     y_score = torch.tensor([]).to(device)
 
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(data_loader):
 
-            if len(data_loader.dataset.imgs.shape)==4:
+            if len(data_loader.dataset.imgs.shape) == 4:
                 inputs = inputs.squeeze()
             try:
                 outputs = model(inputs.to(device))
-            except:
+            except BaseException:
                 outputs = model(inputs.float().to(device))
-            
+
             if loss_fn == 'CE':
                 if task == 'multi-label, binary-class':
                     targets = targets.to(torch.float32).to(device)
@@ -396,7 +570,7 @@ def test(model, evaluator, data_loader, task, criterion, device, run, save_folde
             elif loss_fn == 'AUCM_Multilabel':
                 # pdb.set_trace()
                 targets = torch.squeeze(targets, 1).long().to(device)
-                loss = criterion(outputs, targets)  
+                loss = criterion(outputs, targets)
                 outputs = outputs.to(device)
                 # targets = targets.float().resize_(len(targets), 1)
 
@@ -411,7 +585,12 @@ def test(model, evaluator, data_loader, task, criterion, device, run, save_folde
         return [test_loss, auc, acc]
 
 
-def log_results(args, best_metrics, best_metric_filename, epoch_log, epoch_log_fname:str):
+def log_results(
+        args,
+        best_metrics,
+        best_metric_filename,
+        epoch_log,
+        epoch_log_fname: str):
     # Write Best Metrics
     data = vars(args)
     data.update(best_metrics)
@@ -419,23 +598,23 @@ def log_results(args, best_metrics, best_metric_filename, epoch_log, epoch_log_f
         with open(best_metric_filename, 'r', encoding="utf8") as file:
             file_data = json.loads(file.read())
             file_data.append(data)
-    except:
+    except BaseException:
         file_data = [data]
 
-    with open(best_metric_filename,'w', encoding="utf8") as file:
+    with open(best_metric_filename, 'w', encoding="utf8") as file:
         json.dump(file_data, file)
 
     # Write Epoch Logs
     if not os.path.exists(os.path.dirname(epoch_log_fname)):
         os.makedirs(os.path.dirname(epoch_log_fname))
-    with open(epoch_log_fname,'w') as file:
+    with open(epoch_log_fname, 'w') as file:
         file.write(str(epoch_log))
 
 
-if __name__== '__main__':
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='RUN Baseline model of MedMNIST2D')
-    
+
     parser.add_argument('--data_flag',
                         default='breastmnist',
                         type=str)
@@ -443,10 +622,11 @@ if __name__== '__main__':
                         default='./output',
                         help='output root, where to save models and results',
                         type=str)
-    parser.add_argument('--num_epochs',
-                        default=100,
-                        help='num of epochs of training, the script would only test model if set num_epochs to 0',
-                        type=int)
+    parser.add_argument(
+        '--num_epochs',
+        default=100,
+        help='num of epochs of training, the script would only test model if set num_epochs to 0',
+        type=int)
     parser.add_argument('--gpu_ids',
                         default='0',
                         type=str)
@@ -487,7 +667,7 @@ if __name__== '__main__':
     parser.add_argument('--optimizer',
                         default='PESG',
                         help='Optimizer',
-                        choices=['Adam','PESG'],
+                        choices=['Adam', 'PESG'],
                         type=str)
     parser.add_argument('--epoch_decay',
                         default=2e-3,
@@ -505,24 +685,28 @@ if __name__== '__main__':
                         default=0.1,
                         help='Gamma parameter for Multistep LR Scheduler',
                         type=float)
-    parser.add_argument('--sampling_rate',
-                        default=0.0,
-                        help='The oversampling ratio for the positive minority class',
-                        type=float)
-    parser.add_argument('--run',
-                        default='model1',
-                        help='to name a standard evaluation csv file, named as {flag}_{split}_[AUC]{auc:.3f}_[ACC]{acc:.3f}@{run}.csv',
-                        type=str)
+    parser.add_argument(
+        '--sampling_rate',
+        default=0.0,
+        help='The oversampling ratio for the positive minority class',
+        type=float)
+    parser.add_argument(
+        '--run',
+        default='model1',
+        help='to name a standard evaluation csv file, named as {flag}_{split}_[AUC]{auc:.3f}_[ACC]{acc:.3f}@{run}.csv',
+        type=str)
     parser.add_argument('--based_on',
                         default='val',
                         help='How to select best models - Test or Val?',
                         type=str)
-    parser.add_argument('--modify_datasets',
-                        default='',
-                        choices=['halve_val', 'double_val'],
-                        help='To change the size of validation and training dataset',
-                        type=str)
-    
+    parser.add_argument(
+        '--modify_datasets',
+        default='',
+        choices=[
+            'halve_val',
+            'double_val'],
+        help='To change the size of validation and training dataset',
+        type=str)
 
     args = parser.parse_args()
     data_flag = args.data_flag
@@ -545,6 +729,26 @@ if __name__== '__main__':
     gamma = args.gamma
 
     # pdb.set_trace()
-    
-    main(data_flag, output_root, num_epochs, gpu_ids, batch_size, download, model_flag, resize, as_rgb, model_path, 
-         run, lr, margin, optimizer, epoch_decay, weight_decay, loss, gamma, args, args.sampling_rate, args.momentum)
+
+    main(
+        data_flag,
+        output_root,
+        num_epochs,
+        gpu_ids,
+        batch_size,
+        download,
+        model_flag,
+        resize,
+        as_rgb,
+        model_path,
+        run,
+        lr,
+        margin,
+        optimizer,
+        epoch_decay,
+        weight_decay,
+        loss,
+        gamma,
+        args,
+        args.sampling_rate,
+        args.momentum)
